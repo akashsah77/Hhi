@@ -47,9 +47,9 @@ object GoogleAuthManager {
     }
 
     /**
-     * Native Jetpack Credential Manager 2.0 Google Sign-In.
-     * Displays native 1-tap Google bottom sheet on Android.
-     * If native fails or webClientId is pending, falls back smoothly to Chrome Custom Tabs.
+     * Native Jetpack Credential Manager Google Sign-In.
+     * Always requests the official Google account chooser bottom sheet first.
+     * If the native request cannot complete, falls back to Chrome Custom Tabs.
      */
     fun signInWithGoogle(
         activity: Activity,
@@ -58,9 +58,9 @@ object GoogleAuthManager {
         onSuccess: (idToken: String) -> Unit,
         onError: (message: String) -> Unit
     ) {
-        // Credential Manager requires the OAuth Web/server client ID, not the
-        // Android package client ID. Supabase includes the correct Web client ID
-        // in the OAuth URL, so prefer that value whenever it is available.
+        // Credential Manager's serverClientId is the OAuth audience for the ID
+        // token. It must be the Web/server client ID, not the Android package
+        // client ID. Supabase includes the correct audience in this OAuth URL.
         val urlClientId = fallbackAuthUrl?.let { authUrl ->
             runCatching { Uri.parse(authUrl).getQueryParameter("client_id") }.getOrNull()
         }
@@ -84,7 +84,10 @@ object GoogleAuthManager {
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(false)
             .setServerClientId(effectiveClientId)
-            .setAutoSelectEnabled(true)
+            // Keep this false so the native account chooser is actually shown,
+            // matching the premium bottom-sheet UX instead of silently signing
+            // in with one previously authorized account.
+            .setAutoSelectEnabled(false)
             .build()
 
         val request = GetCredentialRequest.Builder()
@@ -111,10 +114,9 @@ object GoogleAuthManager {
                 }
             } catch (e: GetCredentialCancellationException) {
                 withContext(Dispatchers.Main) {
-                    Log.d(TAG, "Google Sign-In was cancelled by user")
-                    // Do not open a browser after an explicit user cancellation,
-                    // but notify the WebView so its loading state is restored.
-                    onError("Google Sign-In was cancelled")
+                    Log.d(TAG, "Native Google chooser was dismissed; opening Custom Tab fallback")
+                    onError("Google chooser was dismissed")
+                    openFallback()
                 }
             } catch (e: GetCredentialException) {
                 Log.e(TAG, "CredentialManager error: ${e.message}", e)
