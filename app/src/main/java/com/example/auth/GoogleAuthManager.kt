@@ -14,6 +14,8 @@ import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.tasks.Task
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Google authentication pipeline used by the Android WebView.
@@ -38,6 +40,7 @@ object GoogleAuthManager {
 
     private var pendingAuth: PendingAuth? = null
     private var oneTapClient: SignInClient? = null
+    private var resolvingClientId = false
 
     /** Launch the OAuth URL in Chrome Custom Tab without changing the WebView's PKCE state. */
     fun openChromeCustomTab(context: Context, url: String) {
@@ -77,20 +80,57 @@ object GoogleAuthManager {
             return
         }
 
-        val urlClientId = fallbackAuthUrl?.let { authUrl ->
-            runCatching { Uri.parse(authUrl).getQueryParameter("client_id") }.getOrNull()
-        }
-        val webClientId = urlClientId?.takeIf { it.isNotBlank() }
-            ?: serverClientId.takeIf { it.isNotBlank() }
-            ?: com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID
-
-        if (webClientId.isBlank()) {
-            Log.w(TAG, "Google Web client ID is not available")
-            fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
-            onError("Google Web client ID is not available")
+        if (resolvingClientId) {
+            Log.w(TAG, "Google client ID resolution already in progress")
             return
         }
 
+        val directClientId = fallbackAuthUrl?.let { authUrl ->
+            runCatching { Uri.parse(authUrl).getQueryParameter("client_id") }.getOrNull()
+        }?.takeIf { it.isNotBlank() }
+            ?: serverClientId.takeIf { it.isNotBlank() }
+            ?: com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID.takeIf { it.isNotBlank() }
+
+        if (directClientId != null) {
+            startNativePipeline(activity, directClientId, fallbackAuthUrl, onSuccess, onError)
+            return
+        }
+
+        // Supabase's first /auth/v1/authorize URL usually has no client_id yet;
+        // it is added by the Google redirect. Resolve that redirect without
+        // opening a browser so native One Tap still gets the first opportunity.
+        val authUrl = fallbackAuthUrl
+        if (authUrl.isNullOrBlank()) {
+            onError("Google OAuth URL is missing")
+            return
+        }
+
+        resolvingClientId = true
+        Thread {
+            val resolvedClientId = resolveGoogleClientId(authUrl)
+            activity.runOnUiThread {
+                resolvingClientId = false
+                if (!resolvedClientId.isNullOrBlank()) {
+                    startNativePipeline(activity, resolvedClientId, fallbackAuthUrl, onSuccess, onError)
+                } else {
+                    // No browser is opened before the native pipeline. If the
+                    // provider cannot expose its audience, use the existing
+                    // WebView/Custom Tab callback as the final safe fallback.
+                    Log.w(TAG, "Could not resolve Google Web client ID from OAuth redirect")
+                    onError("Google Web client ID could not be resolved")
+                    openChromeCustomTab(activity, authUrl)
+                }
+            }
+        }.start()
+    }
+
+    private fun startNativePipeline(
+        activity: Activity,
+        webClientId: String,
+        fallbackAuthUrl: String?,
+        onSuccess: (idToken: String) -> Unit,
+        onError: (message: String) -> Unit
+    ) {
         pendingAuth = PendingAuth(activity, webClientId, fallbackAuthUrl, onSuccess, onError)
         oneTapClient = Identity.getSignInClient(activity)
 
@@ -131,6 +171,33 @@ object GoogleAuthManager {
                 launchLegacyPicker()
             }
             ?: launchLegacyPicker()
+    }
+
+    private fun resolveGoogleClientId(authUrl: String): String? {
+        var currentUrl = authUrl
+        repeat(4) {
+            val direct = runCatching {
+                Uri.parse(currentUrl).getQueryParameter("client_id")
+            }.getOrNull()
+            if (!direct.isNullOrBlank()) return direct
+
+            val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                requestMethod = "GET"
+                connectTimeout = 6000
+                readTimeout = 6000
+                useCaches = false
+                setRequestProperty("User-Agent", "Mozilla/5.0 Android KissaAI")
+            }
+            try {
+                connection.connect()
+                val location = connection.getHeaderField("Location") ?: return null
+                currentUrl = URL(URL(currentUrl), location).toString()
+            } finally {
+                connection.disconnect()
+            }
+        }
+        return runCatching { Uri.parse(currentUrl).getQueryParameter("client_id") }.getOrNull()
     }
 
     /** Called by MainActivity for the One Tap and legacy picker activity results. */
