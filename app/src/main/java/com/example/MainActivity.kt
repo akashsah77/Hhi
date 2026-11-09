@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.example.auth.GoogleAuthManager
 import com.example.config.AppConfig
 import com.example.ui.components.KissaWebView
 import com.example.ui.theme.MyApplicationTheme
@@ -56,6 +57,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         setDeepLink(intent.data)
+    }
+
+    @Deprecated("Uses the Google Play Services activity-result contract required by the Skyverse auth pipeline")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (GoogleAuthManager.handleActivityResult(requestCode, resultCode, data)) return
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     private fun setDeepLink(uri: Uri?) {
