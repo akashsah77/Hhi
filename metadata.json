@@ -1,0 +1,6 @@
+{
+  "name": "Kissa AI",
+  "description": "Official Android app for Kissa AI platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

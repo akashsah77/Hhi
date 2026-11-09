@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Queries required for UPI apps and Custom Tabs visibility on Android 11+ -->
+    <queries>
+        <!-- Generic UPI payment schemes -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" android:host="pay" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="upi" android:host="mandate" />
+        </intent>
+
+        <!-- Comprehensive Indian UPI apps for direct intent routing & Razorpay detection -->
+        <package android:name="com.google.android.apps.nbu.paisa.user" /> <!-- Google Pay -->
+        <package android:name="com.phonepe.app" /> <!-- PhonePe -->
+        <package android:name="net.one97.paytm" /> <!-- Paytm -->
+        <package android:name="in.org.npci.upiapp" /> <!-- BHIM UPI -->
+        <package android:name="com.dreamplug.androidapp" /> <!-- CRED -->
+        <package android:name="in.amazon.mShop.android.shopping" /> <!-- Amazon Pay -->
+        <package android:name="com.whatsapp" /> <!-- WhatsApp Pay -->
+        <package android:name="com.myairtelapp" /> <!-- Airtel Thanks -->
+        <package android:name="com.mobikwik_new" /> <!-- MobiKwik -->
+        <package android:name="com.freecharge.android" /> <!-- Freecharge -->
+        <package android:name="com.msf.kbank.mobile" /> <!-- Kotak Mobile -->
+        <package android:name="com.sbi.upi" /> <!-- SBI Pay -->
+        <package android:name="com.csam.icici.bank.imobile" /> <!-- iMobile ICICI -->
+        <package android:name="com.hdfcbank.payzapp" /> <!-- PayZapp HDFC -->
+        <package android:name="com.axis.mobile" /> <!-- Axis Mobile -->
+        <package android:name="com.bankofbaroda.upi" /> <!-- Baroda Pay -->
+        <package android:name="com.canarabank.mobility" /> <!-- Canara ai1 -->
+        <package android:name="com.navi.finance" /> <!-- Navi -->
+        <package android:name="com.jupiter.money" /> <!-- Jupiter -->
+        <package android:name="money.fi.app" /> <!-- Fi Money -->
+        <package android:name="indwin.c3.shareapp" /> <!-- Slice -->
+        <package android:name="com.tatadigital.tcp" /> <!-- Tata Neu -->
+        <package android:name="com.supermoney.app" /> <!-- Super.money -->
+
+        <!-- Browser intent for Chrome Custom Tabs -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication"
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.MyApplication">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep link intent filter for OAuth / payment callback redirects -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="kissaai" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="kissaai.pages.dev" android:pathPrefix="/auth" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
