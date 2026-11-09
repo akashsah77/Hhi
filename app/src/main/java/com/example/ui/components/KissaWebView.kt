@@ -159,7 +159,9 @@ private fun deliverGoogleToken(view: WebView?, idToken: String, fallbackAuthUrl:
     val fallbackJs = fallbackAuthUrl?.let { JSONObject.quote(it) } ?: "null"
     view.evaluateJavascript(
         "(function(){var token=$tokenJs; var fallback=$fallbackJs; " +
-            "if (typeof window.onGoogleSignInSuccess === 'function') " +
+            "if (typeof window.onSkyverseGoogleAuth === 'function') " +
+            "{ window.onSkyverseGoogleAuth(token, null, null, null); } " +
+            "else if (typeof window.onGoogleSignInSuccess === 'function') " +
             "{ window.onGoogleSignInSuccess(token, fallback || undefined); } " +
             "else if (typeof window.handleCredentialResponse === 'function') " +
             "{ window.handleCredentialResponse({credential: token}); }})();",
