@@ -58,15 +58,23 @@ object GoogleAuthManager {
         onSuccess: (idToken: String) -> Unit,
         onError: (message: String) -> Unit
     ) {
-        val effectiveClientId = if (serverClientId.isNotBlank()) {
-            serverClientId
-        } else {
-            com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID
+        // Credential Manager requires the OAuth Web/server client ID, not the
+        // Android package client ID. Supabase includes the correct Web client ID
+        // in the OAuth URL, so prefer that value whenever it is available.
+        val urlClientId = fallbackAuthUrl?.let { authUrl ->
+            runCatching { Uri.parse(authUrl).getQueryParameter("client_id") }.getOrNull()
+        }
+        val effectiveClientId = urlClientId?.takeIf { it.isNotBlank() }
+            ?: serverClientId.takeIf { it.isNotBlank() }
+            ?: com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID
+
+        fun openFallback() {
+            fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
         }
 
         if (effectiveClientId.isBlank()) {
             // If client id not yet configured, immediately fallback to Chrome Custom Tab
-            fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
+            openFallback()
             onError("Google Server Client ID is not configured yet. Fallback to Custom Tab.")
             return
         }
@@ -98,24 +106,27 @@ object GoogleAuthManager {
                 } else {
                     withContext(Dispatchers.Main) {
                         onError("Unsupported credential type received.")
-                        fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
+                        openFallback()
                     }
                 }
             } catch (e: GetCredentialCancellationException) {
                 withContext(Dispatchers.Main) {
                     Log.d(TAG, "Google Sign-In was cancelled by user")
+                    // Do not open a browser after an explicit user cancellation,
+                    // but notify the WebView so its loading state is restored.
+                    onError("Google Sign-In was cancelled")
                 }
             } catch (e: GetCredentialException) {
                 Log.e(TAG, "CredentialManager error: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     onError(e.message ?: "Google Sign-in failed")
-                    fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
+                    openFallback()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected sign-in error: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     onError(e.message ?: "Authentication failed")
-                    fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
+                    openFallback()
                 }
             }
         }

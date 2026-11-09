@@ -85,7 +85,7 @@
             </intent-filter>
 
             <!-- Deep link intent filter for OAuth / payment callback redirects -->
-            <intent-filter android:autoVerify="true">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -95,7 +95,8 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="kissaai.pages.dev" android:pathPrefix="/auth" />
+                <!-- Open all Kissa platform links (stories, profiles, auth, etc.) in the app. -->
+                <data android:scheme="https" android:host="kissaai.pages.dev" />
             </intent-filter>
         </activity>
     </application>

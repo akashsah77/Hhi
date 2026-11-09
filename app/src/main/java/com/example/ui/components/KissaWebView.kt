@@ -30,6 +30,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import org.json.JSONObject
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,6 +104,19 @@ class AndroidNativeInterface(
 ) {
     @JavascriptInterface
     fun signInWithGoogle(serverClientId: String?) {
+        startGoogleSignIn(serverClientId, null)
+    }
+
+    /**
+     * Native-first Google Sign-In with the exact OAuth URL to use if the native
+     * Credential Manager flow cannot complete.
+     */
+    @JavascriptInterface
+    fun signInWithGoogleWithFallback(serverClientId: String?, fallbackAuthUrl: String?) {
+        startGoogleSignIn(serverClientId, fallbackAuthUrl)
+    }
+
+    private fun startGoogleSignIn(serverClientId: String?, fallbackAuthUrl: String?) {
         activity.runOnUiThread {
             val effectiveClientId = if (!serverClientId.isNullOrBlank()) {
                 serverClientId
@@ -113,15 +127,17 @@ class AndroidNativeInterface(
             GoogleAuthManager.signInWithGoogle(
                 activity = activity,
                 serverClientId = effectiveClientId,
-                fallbackAuthUrl = null,
+                fallbackAuthUrl = fallbackAuthUrl,
                 onSuccess = { idToken ->
-                    webViewProvider()?.evaluateJavascript(
-                        "if (window.onGoogleSignInSuccess) { window.onGoogleSignInSuccess('$idToken'); } else if (window.handleCredentialResponse) { window.handleCredentialResponse({credential: '$idToken'}); }",
-                        null
-                    )
+                    deliverGoogleToken(webViewProvider(), idToken, fallbackAuthUrl)
                 },
                 onError = { error ->
                     Log.w(TAG, "Native Google Sign-In error: $error")
+                    val errorJs = JSONObject.quote(error)
+                    webViewProvider()?.evaluateJavascript(
+                        "if (window.onGoogleSignInError) { window.onGoogleSignInError($errorJs); }",
+                        null
+                    )
                 }
             )
         }
@@ -137,10 +153,26 @@ class AndroidNativeInterface(
     }
 }
 
+private fun deliverGoogleToken(view: WebView?, idToken: String, fallbackAuthUrl: String?) {
+    if (view == null) return
+    val tokenJs = JSONObject.quote(idToken)
+    val fallbackJs = fallbackAuthUrl?.let { JSONObject.quote(it) } ?: "null"
+    view.evaluateJavascript(
+        "(function(){var token=$tokenJs; var fallback=$fallbackJs; " +
+            "if (typeof window.onGoogleSignInSuccess === 'function') " +
+            "{ window.onGoogleSignInSuccess(token, fallback || undefined); } " +
+            "else if (typeof window.handleCredentialResponse === 'function') " +
+            "{ window.handleCredentialResponse({credential: token}); }})();",
+        null
+    )
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun KissaWebView(
     url: String,
+    incomingUrl: String? = null,
+    incomingUrlNonce: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -489,12 +521,17 @@ fun KissaWebView(
                             }
                         }
 
-                        loadUrl(url)
+                        if (!incomingUrl.isNullOrBlank()) tag = incomingUrlNonce
+                        loadUrl(incomingUrl ?: url)
                         webViewInstance = this
                     }
                 },
                 update = { webView ->
                     webViewInstance = webView
+                    if (!incomingUrl.isNullOrBlank() && webView.tag != incomingUrlNonce) {
+                        webView.tag = incomingUrlNonce
+                        webView.loadUrl(incomingUrl)
+                    }
                 },
                 modifier = Modifier
                     .fillMaxSize()
@@ -621,39 +658,19 @@ private fun handlePaymentAndAuthSchemes(
 ): Boolean {
     // 1. Google OAuth Interceptor: Trigger Native Credential Manager 2.0 FIRST!
     if (url.contains("accounts.google.com") || url.contains("apis.google.com/signin")) {
-        val uri = Uri.parse(url)
-        val extractedClientId = uri.getQueryParameter("client_id")
-        val effectiveClientId = if (!extractedClientId.isNullOrBlank()) {
-            extractedClientId
-        } else {
-            AppConfig.GOOGLE_WEB_CLIENT_ID
-        }
-
-        if (activity != null && effectiveClientId.isNotBlank()) {
-            Log.d(TAG, "Triggering Native Credential Manager 2.0 first for Google Sign-In (Client ID: $effectiveClientId)")
+        if (activity != null) {
+            Log.d(TAG, "Triggering Native Credential Manager 2.0 first for Google Sign-In")
             GoogleAuthManager.signInWithGoogle(
                 activity = activity,
-                serverClientId = effectiveClientId,
+                // GoogleAuthManager derives the Web/server client ID from this
+                // OAuth URL. The Android client ID is not used as serverClientId.
+                serverClientId = AppConfig.GOOGLE_WEB_CLIENT_ID,
                 fallbackAuthUrl = url,
                 onSuccess = { idToken ->
-                    val redirectUri = uri.getQueryParameter("redirect_uri")
-                    if (!redirectUri.isNullOrBlank()) {
-                        val finalUrl = if (redirectUri.contains("?")) {
-                            "$redirectUri&id_token=$idToken&credential=$idToken"
-                        } else {
-                            "$redirectUri?id_token=$idToken&credential=$idToken"
-                        }
-                        view?.loadUrl(finalUrl)
-                    } else {
-                        view?.evaluateJavascript(
-                            "if (window.onGoogleSignInSuccess) { window.onGoogleSignInSuccess('$idToken'); } else if (window.handleCredentialResponse) { window.handleCredentialResponse({credential: '$idToken'}); }",
-                            null
-                        )
-                    }
+                    deliverGoogleToken(view, idToken, url)
                 },
                 onError = { error ->
-                    Log.w(TAG, "Native Credential Manager failed ($error). Opening Chrome Custom Tab fallback.")
-                    GoogleAuthManager.openChromeCustomTab(ctx, url)
+                    Log.w(TAG, "Native Credential Manager failed ($error). Fallback handled by GoogleAuthManager.")
                 }
             )
             return true
