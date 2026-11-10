@@ -33,8 +33,9 @@ object AppConfig {
     )
 
     /**
-     * Google Web Client ID for native Jetpack Credential Manager 2.0.
-     * If empty, the app will automatically extract client_id from the website's Google Sign-In request.
+     * Google client ID supplied for this Kissa Android application.
+     * This is used as the ID-token audience for the native Supabase exchange.
      */
-    var GOOGLE_WEB_CLIENT_ID: String = ""
+    const val GOOGLE_WEB_CLIENT_ID: String =
+        "1067121980936-cidkjm5kiue7l610t9tf1tl8nvs1vvlq.apps.googleusercontent.com"
 }
