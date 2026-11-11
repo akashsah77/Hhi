@@ -32,10 +32,14 @@ object AppConfig {
         "pages.dev"
     )
 
+    /** Android OAuth client registered for com.kissa.app + the release/debug SHA-1. */
+    const val GOOGLE_ANDROID_CLIENT_ID: String =
+        "1067121980936-cidkjm5kiue7l610t9tf1tl8nvs1vvlq.apps.googleusercontent.com"
+
     /**
-     * Google client ID supplied for this Kissa Android application.
-     * This is used as the ID-token audience for the native Supabase exchange.
+     * Web OAuth client used as the ID-token audience.
+     * Supabase Google provider must use this same Web client ID.
      */
     const val GOOGLE_WEB_CLIENT_ID: String =
-        "1067121980936-cidkjm5kiue7l610t9tf1tl8nvs1vvlq.apps.googleusercontent.com"
+        "1067121980936-7f8inodrvm5otg83nv3dvudq9kch2sju.apps.googleusercontent.com"
 }
