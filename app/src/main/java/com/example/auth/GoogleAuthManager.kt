@@ -3,9 +3,7 @@ package com.example.auth
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.util.Log
-import androidx.browser.customtabs.CustomTabsIntent
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -16,7 +14,8 @@ import com.google.android.gms.common.api.ApiException
  *
  * Primary path follows the working Business OS pattern:
  * native Google account chooser -> ID token -> WebView -> Supabase.
- * The OAuth URL is retained only as a final browser fallback.
+ * Browser fallback is intentionally disabled temporarily while the native flow
+ * is being verified. The previous behavior is preserved in the backup branch.
  */
 object GoogleAuthManager {
     private const val TAG = "GoogleAuthManager"
@@ -32,22 +31,9 @@ object GoogleAuthManager {
 
     private var pendingAuth: PendingAuth? = null
 
+    /** Temporarily disabled. Kept as a no-op so old WebView calls remain safe. */
     fun openChromeCustomTab(context: Context, url: String) {
-        try {
-            CustomTabsIntent.Builder()
-                .setShowTitle(true)
-                .setUrlBarHidingEnabled(false)
-                .build()
-                .apply { intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK }
-                .launchUrl(context, Uri.parse(url))
-        } catch (e: Exception) {
-            Log.e(TAG, "Custom Tab failed", e)
-            runCatching {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                })
-            }.onFailure { Log.e(TAG, "External browser fallback failed", it) }
-        }
+        Log.w(TAG, "Custom Chrome fallback temporarily disabled")
     }
 
     /** Native account chooser first. No browser is opened by this method. */
@@ -66,7 +52,6 @@ object GoogleAuthManager {
         val clientId = serverClientId.ifBlank { com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID }
         if (clientId.isBlank()) {
             onError("Google server client ID is missing")
-            fallbackAuthUrl?.let { openChromeCustomTab(activity, it) }
             return
         }
 
@@ -83,7 +68,7 @@ object GoogleAuthManager {
             try {
                 activity.startActivityForResult(client.signInIntent, REQUEST_NATIVE_GOOGLE)
             } catch (e: Exception) {
-                finishFailure("Could not launch native Google account chooser: ${e.message}", true)
+                    finishFailure("Could not launch native Google account chooser: ${e.message}")
             }
         }
     }
@@ -92,7 +77,7 @@ object GoogleAuthManager {
         if (requestCode != REQUEST_NATIVE_GOOGLE) return false
         val auth = pendingAuth ?: return true
         if (resultCode != Activity.RESULT_OK) {
-            finishFailure("Native Google account chooser was dismissed", true)
+            finishFailure("Native Google account chooser was dismissed")
             return true
         }
 
@@ -102,27 +87,24 @@ object GoogleAuthManager {
                     .getResult(ApiException::class.java)
             val token = account.idToken
             if (token.isNullOrBlank()) {
-                finishFailure("Native Google returned no ID token", true)
+                finishFailure("Native Google returned no ID token")
             } else {
                 pendingAuth = null
                 Log.d(TAG, "Native Google token received for ${account.email}")
                 auth.onSuccess(token)
             }
         } catch (e: ApiException) {
-            finishFailure("Native Google failed with status ${e.statusCode}", true)
+            finishFailure("Native Google failed with status ${e.statusCode}")
         } catch (e: Exception) {
-            finishFailure("Native Google result could not be read: ${e.message}", true)
+            finishFailure("Native Google result could not be read: ${e.message}")
         }
         return true
     }
 
-    private fun finishFailure(message: String, allowBrowserFallback: Boolean) {
+    private fun finishFailure(message: String) {
         val auth = pendingAuth ?: return
         pendingAuth = null
         Log.w(TAG, message)
         auth.onError(message)
-        if (allowBrowserFallback) {
-            auth.fallbackAuthUrl?.let { openChromeCustomTab(auth.activity, it) }
-        }
     }
 }
