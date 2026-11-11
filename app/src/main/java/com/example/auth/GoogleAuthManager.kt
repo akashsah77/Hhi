@@ -139,12 +139,10 @@ object GoogleAuthManager {
             return true
         }
 
-        if (resultCode != Activity.RESULT_OK) {
-            finishFailure("Legacy Google account picker was dismissed")
-            return true
-        }
-
         try {
+            // Do not trust RESULT_CANCELED alone: Google can return it for a
+            // developer configuration error after the account was selected.
+            // Always parse the returned task so the real status reaches the UI.
             val account: GoogleSignInAccount =
                 GoogleSignIn.getSignedInAccountFromIntent(data)
                     .getResult(ApiException::class.java)
@@ -156,7 +154,13 @@ object GoogleAuthManager {
                 finishSuccess(token)
             }
         } catch (e: ApiException) {
-            finishFailure("Legacy Google failed with status ${e.statusCode}")
+            val status = when (e.statusCode) {
+                10 -> "DEVELOPER_ERROR (10): Android package/SHA or Web client ID configuration mismatch"
+                12500 -> "SIGN_IN_FAILED (12500): Google sign-in configuration failed"
+                12501 -> "SIGN_IN_CANCELLED (12501): Google account picker was cancelled"
+                else -> "Google status ${e.statusCode}"
+            }
+            finishFailure("Legacy Google failed: $status")
         } catch (e: Exception) {
             finishFailure("Legacy Google result could not be read: ${e.message}")
         }
