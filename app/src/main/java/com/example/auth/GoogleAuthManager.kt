@@ -25,7 +25,7 @@ object GoogleAuthManager {
     private const val TAG = "GoogleAuthManager"
 
     private data class PendingAuth(
-        val activity: ComponentActivity,
+        val activity: Activity,
         val serverClientId: String,
         val fallbackAuthUrl: String?,
         val onSuccess: (idToken: String) -> Unit,
@@ -70,7 +70,7 @@ object GoogleAuthManager {
 
     /** Credential Manager is primary; Supabase OAuth in Chrome is the fallback. */
     fun signInWithGoogle(
-        activity: ComponentActivity,
+        activity: Activity,
         serverClientId: String,
         fallbackAuthUrl: String? = null,
         onSuccess: (idToken: String) -> Unit,
@@ -87,6 +87,13 @@ object GoogleAuthManager {
                 onError("Google Web OAuth client ID is missing")
                 return@runOnUiThread
             }
+            val lifecycleActivity = activity as? ComponentActivity
+            if (lifecycleActivity == null) {
+                if (fallbackAuthUrl.isNullOrBlank() || !openChromeCustomTab(activity, fallbackAuthUrl)) {
+                    onError("Google sign-in requires a ComponentActivity host or a browser fallback URL")
+                }
+                return@runOnUiThread
+            }
 
             val auth = PendingAuth(activity, clientId, fallbackAuthUrl, onSuccess, onError)
             pendingAuth = auth
@@ -100,7 +107,7 @@ object GoogleAuthManager {
                 .addCredentialOption(googleIdOption)
                 .build()
 
-            activity.lifecycleScope.launch {
+            lifecycleActivity.lifecycleScope.launch {
                 try {
                     val credentialManager = CredentialManager.create(activity)
                     // Credential Manager recommends a mutable activity context
