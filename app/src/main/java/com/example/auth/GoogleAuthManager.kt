@@ -3,27 +3,25 @@ package com.example.auth
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.MutableContextWrapper
+import android.net.Uri
 import android.util.Log
-import com.google.android.gms.auth.api.identity.BeginSignInRequest
-import com.google.android.gms.auth.api.identity.Identity
-import com.google.android.gms.auth.api.identity.SignInClient
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.lifecycle.lifecycleScope
+import com.example.config.AppConfig
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
-/**
- * Native Google authentication for the WebView.
- *
- * Order matches Skyverse:
- * 1) Google One Tap premium account chooser bottom sheet
- * 2) Legacy Google account picker
- * 3) No browser fallback for now; Custom Chrome is intentionally disabled.
- */
+/** Native Google authentication for the Android WebView. */
 object GoogleAuthManager {
     private const val TAG = "GoogleAuthManager"
-    private const val REQUEST_ONE_TAP = 7101
-    private const val REQUEST_LEGACY_GOOGLE = 7102
 
     private data class PendingAuth(
         val activity: Activity,
@@ -33,15 +31,43 @@ object GoogleAuthManager {
         val onError: (message: String) -> Unit
     )
 
+    // All state changes happen on the main thread because callers enter through
+    // the Android WebView JavaScript bridge.
     private var pendingAuth: PendingAuth? = null
-    private var oneTapClient: SignInClient? = null
 
-    /** Kept as a no-op while Custom Chrome is disabled for native-flow testing. */
-    fun openChromeCustomTab(context: Context, url: String) {
-        Log.w(TAG, "Custom Chrome fallback is temporarily disabled")
+    /** Open only HTTPS URLs; use Chrome Custom Tabs, then the system browser. */
+    fun openChromeCustomTab(context: Context, url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri?.scheme != "https" || uri.host.isNullOrBlank()) {
+            Log.w(TAG, "Refusing to open a non-HTTPS or invalid browser URL")
+            return false
+        }
+
+        return try {
+            val customTab = CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .setUrlBarHidingEnabled(false)
+                .build()
+            if (context !is Activity) {
+                customTab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            customTab.launchUrl(context, uri)
+            true
+        } catch (customTabError: Exception) {
+            Log.w(TAG, "Chrome Custom Tab could not open; trying the default browser", customTabError)
+            try {
+                val browserIntent = Intent(Intent.ACTION_VIEW, uri)
+                if (context !is Activity) browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(browserIntent)
+                true
+            } catch (browserError: Exception) {
+                Log.e(TAG, "No browser could open the HTTPS OAuth URL", browserError)
+                false
+            }
+        }
     }
 
-    /** Starts the premium One Tap bottom sheet first. */
+    /** Credential Manager is primary; Supabase OAuth in Chrome is the fallback. */
     fun signInWithGoogle(
         activity: Activity,
         serverClientId: String,
@@ -49,146 +75,68 @@ object GoogleAuthManager {
         onSuccess: (idToken: String) -> Unit,
         onError: (message: String) -> Unit
     ) {
-        if (pendingAuth != null) {
-            Log.w(TAG, "Google sign-in already in progress")
-            return
-        }
+        activity.runOnUiThread {
+            if (pendingAuth != null) {
+                Log.w(TAG, "Google sign-in already in progress")
+                return@runOnUiThread
+            }
 
-        val clientId = serverClientId.ifBlank { com.example.config.AppConfig.GOOGLE_WEB_CLIENT_ID }
-        if (clientId.isBlank()) {
-            onError("Google server client ID is missing")
-            return
-        }
+            val clientId = serverClientId.ifBlank { AppConfig.GOOGLE_WEB_CLIENT_ID }
+            if (clientId.isBlank()) {
+                onError("Google Web OAuth client ID is missing")
+                return@runOnUiThread
+            }
 
-        pendingAuth = PendingAuth(activity, clientId, fallbackAuthUrl, onSuccess, onError)
-        oneTapClient = Identity.getSignInClient(activity)
+            val auth = PendingAuth(activity, clientId, fallbackAuthUrl, onSuccess, onError)
+            pendingAuth = auth
 
-        val request = BeginSignInRequest.builder()
-            .setGoogleIdTokenRequestOptions(
-                BeginSignInRequest.GoogleIdTokenRequestOptions.builder()
-                    .setSupported(true)
-                    .setServerClientId(clientId)
-                    .setFilterByAuthorizedAccounts(false)
-                    .build()
-            )
-            .setAutoSelectEnabled(false)
-            .build()
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId(clientId)
+                .setAutoSelectEnabled(false)
+                .build()
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
 
-        // Clear One Tap state so the account chooser sheet is visible, then launch it.
-        runCatching {
-            oneTapClient?.signOut()?.addOnCompleteListener { beginOneTap(request) }
-                ?: beginOneTap(request)
-        }.onFailure {
-            Log.w(TAG, "One Tap signOut failed; launching chooser anyway", it)
-            beginOneTap(request)
-        }
-    }
-
-    private fun beginOneTap(request: BeginSignInRequest) {
-        val auth = pendingAuth ?: return
-        oneTapClient?.beginSignIn(request)
-            ?.addOnSuccessListener { result ->
+            activity.lifecycleScope.launch {
                 try {
-                    auth.activity.startIntentSenderForResult(
-                        result.pendingIntent.intentSender,
-                        REQUEST_ONE_TAP,
-                        null,
-                        0,
-                        0,
-                        0
+                    val credentialManager = CredentialManager.create(activity)
+                    // Credential Manager recommends a mutable activity context
+                    // to handle activity recreation while its system UI is open.
+                    val mutableActivityContext = MutableContextWrapper(activity)
+                    val response = credentialManager.getCredential(
+                        context = mutableActivityContext,
+                        request = request
                     )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Premium One Tap sheet could not launch", e)
-                    launchLegacyPicker()
-                }
-            }
-            ?.addOnFailureListener { error ->
-                Log.w(TAG, "Premium One Tap unavailable: ${error.message}")
-                launchLegacyPicker()
-            }
-            ?: launchLegacyPicker()
-    }
-
-    fun handleActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode != REQUEST_ONE_TAP && requestCode != REQUEST_LEGACY_GOOGLE) return false
-        val auth = pendingAuth ?: return true
-
-        if (requestCode == REQUEST_ONE_TAP) {
-            if (resultCode == Activity.RESULT_OK) {
-                try {
-                    val credential = oneTapClient?.getSignInCredentialFromIntent(data)
-                    val token = credential?.googleIdToken
-                    if (!token.isNullOrBlank()) {
-                        Log.d(TAG, "Premium One Tap token received")
-                        finishSuccess(token)
-                    } else {
-                        Log.w(TAG, "Premium One Tap returned no ID token")
-                        launchLegacyPicker()
+                    val credential = response.credential
+                    if (credential !is CustomCredential ||
+                        credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                    ) {
+                        finishFailure("Credential Manager returned an unsupported Google credential")
+                        return@launch
                     }
-                } catch (e: ApiException) {
-                    Log.w(TAG, "Premium One Tap result failed: ${e.statusCode}")
-                    launchLegacyPicker()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Premium One Tap credential parsing failed", e)
-                    launchLegacyPicker()
-                }
-            } else {
-                Log.d(TAG, "Premium One Tap dismissed; opening legacy picker")
-                launchLegacyPicker()
-            }
-            return true
-        }
 
-        try {
-            // Do not trust RESULT_CANCELED alone: Google can return it for a
-            // developer configuration error after the account was selected.
-            // Always parse the returned task so the real status reaches the UI.
-            val account: GoogleSignInAccount =
-                GoogleSignIn.getSignedInAccountFromIntent(data)
-                    .getResult(ApiException::class.java)
-            val token = account.idToken
-            if (token.isNullOrBlank()) {
-                finishFailure("Legacy Google returned no ID token")
-            } else {
-                Log.d(TAG, "Legacy Google token received for ${account.email}")
-                finishSuccess(token)
-            }
-        } catch (e: ApiException) {
-            val status = when (e.statusCode) {
-                10 -> "DEVELOPER_ERROR (10): Android package/SHA or Web client ID configuration mismatch"
-                12500 -> "SIGN_IN_FAILED (12500): Google sign-in configuration failed"
-                12501 -> "SIGN_IN_CANCELLED (12501): Google account picker was cancelled"
-                else -> "Google status ${e.statusCode}"
-            }
-            finishFailure("Legacy Google failed: $status")
-        } catch (e: Exception) {
-            finishFailure("Legacy Google result could not be read: ${e.message}")
-        }
-        return true
-    }
-
-    private fun launchLegacyPicker() {
-        val auth = pendingAuth ?: return
-        val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail()
-            .requestProfile()
-            .requestIdToken(auth.serverClientId)
-            .build()
-        val client = GoogleSignIn.getClient(auth.activity, options)
-        runCatching {
-            client.signOut().addOnCompleteListener {
-                try {
-                    auth.activity.startActivityForResult(client.signInIntent, REQUEST_LEGACY_GOOGLE)
+                    val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                    if (idToken.isBlank()) {
+                        finishFailure("Credential Manager returned an empty Google ID token")
+                    } else {
+                        finishSuccess(idToken)
+                    }
+                } catch (e: CancellationException) {
+                    if (pendingAuth?.activity === activity) pendingAuth = null
+                    throw e
+                } catch (e: GetCredentialCancellationException) {
+                    // Respect an explicit user cancellation; do not unexpectedly
+                    // open another sign-in page after they dismissed the chooser.
+                    finishFailure("Google sign-in was cancelled", allowBrowserFallback = false)
+                } catch (e: GetCredentialException) {
+                    Log.w(TAG, "Credential Manager failed; trying the OAuth browser fallback", e)
+                    finishFailure("Credential Manager sign-in failed: ${e.message}")
                 } catch (e: Exception) {
-                    finishFailure("Could not launch legacy Google picker: ${e.message}")
+                    Log.w(TAG, "Could not complete Credential Manager sign-in", e)
+                    finishFailure("Google sign-in failed: ${e.message}")
                 }
-            }
-        }.onFailure {
-            Log.w(TAG, "Legacy signOut failed; launching picker anyway", it)
-            try {
-                auth.activity.startActivityForResult(client.signInIntent, REQUEST_LEGACY_GOOGLE)
-            } catch (e: Exception) {
-                finishFailure("Could not launch legacy Google picker: ${e.message}")
             }
         }
     }
@@ -196,15 +144,21 @@ object GoogleAuthManager {
     private fun finishSuccess(idToken: String) {
         val auth = pendingAuth ?: return
         pendingAuth = null
-        oneTapClient = null
         auth.onSuccess(idToken)
     }
 
-    private fun finishFailure(message: String) {
+    private fun finishFailure(message: String, allowBrowserFallback: Boolean = true) {
         val auth = pendingAuth ?: return
         pendingAuth = null
-        oneTapClient = null
         Log.w(TAG, message)
+
+        val fallbackUrl = auth.fallbackAuthUrl
+        if (allowBrowserFallback && !fallbackUrl.isNullOrBlank()) {
+            if (openChromeCustomTab(auth.activity, fallbackUrl)) return
+            auth.onError("$message. Chrome/browser could not open the OAuth fallback.")
+            return
+        }
+
         auth.onError(message)
     }
 }

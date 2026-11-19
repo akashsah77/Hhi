@@ -1,75 +1,43 @@
-# Kissa AI — Android Application
+# Kissa AI — Android app
 
-Official Android Application for **Kissa AI** (`https://kissaai.pages.dev/`).
+The Android application in this repository loads the Kissa web platform at `https://kissaai.pages.dev/`. The web source is in [`akashsah77/story-weaver-ai`](https://github.com/akashsah77/story-weaver-ai); the deployed site currently uses Kissa branding even though the repository is named Story Weaver AI.
 
----
+## Android/web sign-in connection
 
-## 📌 Application Specifications
+The Android app keeps the web session and uses this sign-in order:
 
-- **App Name:** Kissa AI
-- **Application ID / Package Name:** `com.kissa.app`
-- **Default Web Platform URL:** `https://kissaai.pages.dev/`
+1. AndroidX Credential Manager requests a Google ID token using the **Web OAuth client ID**.
+2. The web page passes that token to Supabase through `signInWithIdToken`.
+3. If Credential Manager fails, the app opens the prepared Supabase OAuth URL in Chrome Custom Tabs. Google returns to `https://kissaai.pages.dev/auth/callback`, which is associated with the Android app by the App Links declaration and `public/.well-known/assetlinks.json` in the web repository.
 
----
+The Web client ID used as the Credential Manager server/client audience and the Web OAuth client configured for the Supabase Google provider must belong to the same Google Cloud project. Never put a Google client secret in the Android app.
 
-## 🔐 Production Signing Keystore Details (Valid until year 2226)
+## Google Cloud and Supabase checklist
 
-This repository includes the generated 100-200 year production keystore file (`my-upload-key.jks`) for automatic builds and Google Play signing.
+- In Google Cloud, configure the **Android OAuth client** with package name `com.kissa.app` and the SHA-1 fingerprint for every installed signing certificate: debug, direct-release/upload as applicable, and the **Play app-signing certificate** for Play-distributed installs.
+- Configure the **Web OAuth client** in that same Google Cloud project. Its client ID must match `GOOGLE_WEB_CLIENT_ID` in `AppConfig.kt` and the client ID used by Supabase's Google provider.
+- In Google Cloud, add the exact Supabase provider callback `https://<your-supabase-project-ref>.supabase.co/auth/v1/callback` to the Web OAuth client's authorized redirect URIs.
+- In Supabase Auth, enable Google with that same Web client ID and its client secret. Allow `https://kissaai.pages.dev/auth/callback` as an application redirect URL.
+- In the Story Weaver web repository, update `public/.well-known/assetlinks.json` with the SHA-256 fingerprint of the certificate that signs the installed app. For Play distribution, use the Play **app-signing** certificate fingerprint, not only the upload-key fingerprint.
+- To find the actual Play signing fingerprints, open Play Console → **Release → Setup → App integrity**. For a locally signed APK, use `./gradlew signingReport` or `keytool -printcert -jarfile <app.apk>`.
 
-- **Keystore File:** `my-upload-key.jks`
-- **Key Alias:** `upload`
-- **Keystore Password:** `kissaai2026`
-- **Key Password:** `kissaai2026`
-- **Validity:** `73,050 days` (Valid from November 5, 2026 until **November 7, 2226**)
-- **Algorithm:** 2048-bit RSA with SHA384withRSA
+Google Cloud OAuth credentials cannot be validated from this repository alone. If the settings above already match and native sign-in still fails, capture the redacted Android error/status from the app and check the Google Cloud OAuth client and Supabase provider configuration against the package and certificate actually used to install that APK.
 
-### 🔑 Production Fingerprints (Google Play / Firebase / Google Sign-In)
+## Release signing security
 
-- **SHA-1 Fingerprint:**
-  ```text
-  12:01:F5:1E:1A:BC:A1:BF:F2:C2:8C:88:E5:70:4A:2A:C0:67:42:86
-  ```
+A release keystore and its password were committed to this **public** repository. Treat that key and password as compromised; do not reuse them for a production release. A normal cleanup commit does not remove them from Git history. Rotate the upload key in Play Console if the app is already enrolled in Play App Signing. If the app is distributed directly, plan key rotation carefully because Android does not allow an installed app to update to a differently signed package.
 
-- **SHA-256 Fingerprint:**
-  ```text
-  CD:83:25:A8:FD:9B:B2:33:77:13:C3:88:DF:A8:43:42:8B:E2:0D:BD:B6:09:04:29:76:FA:13:41:1E:D2:57:F7
-  ```
+Store the replacement signing material only in GitHub Actions secrets. Configure these repository secrets before triggering a signed release:
 
----
+- `ANDROID_KEYSTORE_BASE64` — base64-encoded replacement keystore
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_PASSWORD`
+- `ANDROID_KEY_ALIAS`
 
-## 🛠️ Debug Keystore Fingerprints (For Local Development)
+The workflow decodes the keystore into the runner's temporary directory, signs the release APK/AAB, and does not check the keystore into the repository. Pull requests run tests and build a debug APK without access to release-signing secrets.
 
-- **Keystore File:** `debug.keystore`
-- **Key Alias:** `androiddebugkey`
-- **Password:** `android`
-- **SHA-1 Fingerprint:**
-  ```text
-  51:31:32:50:FA:B0:E3:85:26:85:28:75:39:BF:DF:5B:A8:5B:FF:AC
-  ```
-- **SHA-256 Fingerprint:**
-  ```text
-  47:9B:D1:A5:E2:0C:C1:42:D9:A5:E8:B2:CB:2A:94:DF:6D:9F:C2:2A:37:F1:AE:2B:1A:30:4B:93:AD:0C:83:FE
-  ```
+The exposed key/password also remain in prior public Git commits until the repository history is rewritten. After rotating the key, arrange a coordinated history purge and force-push; this can affect other clones and contributors, so it is deliberately not performed automatically.
 
----
+## Automatic app versions
 
-## 🌐 Future Custom Domain Change (Future me URL kaise badle)
-
-Agar future me aap custom domain (e.g., `https://kissaai.com`) buy karte hain:
-
-1. Open file: `app/src/main/java/com/example/config/AppConfig.kt`
-2. Change `BASE_URL`:
-   ```kotlin
-   const val BASE_URL: String = "https://your-custom-domain.com/"
-   ```
-3. Save the file and rebuild. The app will immediately point to your new custom domain!
-
----
-
-## 🚀 Automatic GitHub Actions Build (CI/CD)
-
-The GitHub workflow is pre-configured in `.github/workflows/build.yml`.
-When you push to GitHub or trigger the workflow:
-1. It automatically builds the signed **Release APK** (`Kissa-AI-Release-APK`).
-2. It automatically builds the **Release AAB** (`Kissa-AI-Release-AAB`) for Google Play Store.
-3. No secrets setup required; it runs automatically out of the box!
+GitHub Actions supplies its monotonically increasing workflow run number to Gradle. Release artifacts use `versionName` `1.0.0.<run-number>` and a correspondingly increasing `versionCode`; the APK and AAB from one run share the same version. The local default is `1.0.0.2`; for a local build, set the number explicitly, for example `./gradlew assembleDebug -PappBuildNumber=3`.

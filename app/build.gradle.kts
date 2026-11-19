@@ -8,6 +8,14 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val appBuildNumber = providers.gradleProperty("appBuildNumber")
+  .orElse(providers.environmentVariable("APP_BUILD_NUMBER"))
+  .orElse("2")
+  .get()
+  .toIntOrNull()
+  ?.takeIf { it in 1..2_099_999_999 }
+  ?: throw GradleException("appBuildNumber must be a positive integer below the Android versionCode limit")
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -16,8 +24,10 @@ android {
     applicationId = "com.kissa.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // GitHub Actions increments APP_BUILD_NUMBER for every workflow run.
+    // The +1 preserves monotonicity from the previous versionCode=1 release.
+    versionCode = appBuildNumber + 1
+    versionName = "1.0.0.$appBuildNumber"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -26,11 +36,13 @@ android {
   // and updating Android apps in AI Studio.
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val keystorePath = providers.environmentVariable("KEYSTORE_PATH")
+        .orElse("${rootDir}/release-key.jks")
+        .get()
       storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storePassword = providers.environmentVariable("STORE_PASSWORD").orNull
+      keyAlias = providers.environmentVariable("KEY_ALIAS").orElse("upload").get()
+      keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -111,11 +123,10 @@ dependencies {
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
-  // Google Authentication Credential Manager 2.0 & Chrome Custom Tabs
+  // Google Credential Manager & Chrome Custom Tabs
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
-  implementation(libs.play.services.auth)
   implementation(libs.androidx.browser)
 
   // implementation(libs.firebase.appcheck.recaptcha)

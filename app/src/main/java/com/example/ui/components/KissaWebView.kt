@@ -658,7 +658,7 @@ private fun handlePaymentAndAuthSchemes(
     url: String,
     launchUpiIntent: (Intent) -> Unit
 ): Boolean {
-    // 1. Google OAuth Interceptor: trigger native One Tap bottom sheet first.
+    // 1. Google OAuth Interceptor: trigger the native Credential Manager sheet first.
     if (url.contains("accounts.google.com") || url.contains("apis.google.com/signin")) {
         if (activity != null) {
             Log.d(TAG, "Triggering Native Credential Manager 2.0 first for Google Sign-In")
