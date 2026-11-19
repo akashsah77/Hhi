@@ -31,6 +31,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import org.json.JSONObject
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -660,10 +661,11 @@ private fun handlePaymentAndAuthSchemes(
 ): Boolean {
     // 1. Google OAuth Interceptor: trigger the native Credential Manager sheet first.
     if (url.contains("accounts.google.com") || url.contains("apis.google.com/signin")) {
-        if (activity != null) {
+        val componentActivity = activity as? ComponentActivity
+        if (componentActivity != null) {
             Log.d(TAG, "Triggering Native Credential Manager 2.0 first for Google Sign-In")
             GoogleAuthManager.signInWithGoogle(
-                activity = activity,
+                activity = componentActivity,
                 // GoogleAuthManager derives the Web/server client ID from this
                 // OAuth URL. The Android client ID is not used as serverClientId.
                 serverClientId = AppConfig.GOOGLE_WEB_CLIENT_ID,
@@ -675,11 +677,9 @@ private fun handlePaymentAndAuthSchemes(
                     Log.w(TAG, "Native Credential Manager failed ($error). Fallback handled by GoogleAuthManager.")
                 }
             )
-            return true
-        } else {
-            GoogleAuthManager.openChromeCustomTab(ctx, url)
-            return true
         }
+        GoogleAuthManager.openChromeCustomTab(ctx, url)
+        return true
     }
 
     // 2. Comprehensive Indian UPI Payment Apps Interceptor

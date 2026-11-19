@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.MutableContextWrapper
 import android.net.Uri
 import android.util.Log
+import androidx.activity.ComponentActivity
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -24,7 +25,7 @@ object GoogleAuthManager {
     private const val TAG = "GoogleAuthManager"
 
     private data class PendingAuth(
-        val activity: Activity,
+        val activity: ComponentActivity,
         val serverClientId: String,
         val fallbackAuthUrl: String?,
         val onSuccess: (idToken: String) -> Unit,
@@ -69,7 +70,7 @@ object GoogleAuthManager {
 
     /** Credential Manager is primary; Supabase OAuth in Chrome is the fallback. */
     fun signInWithGoogle(
-        activity: Activity,
+        activity: ComponentActivity,
         serverClientId: String,
         fallbackAuthUrl: String? = null,
         onSuccess: (idToken: String) -> Unit,
